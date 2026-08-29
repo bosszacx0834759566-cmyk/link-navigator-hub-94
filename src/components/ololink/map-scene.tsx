@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import earthDayAsset from '@/assets/earth_atmos_2048.jpg.asset.json';
-const earthDay = earthDayAsset.url;
+import earthDay from '@/assets/earth-map.jpg';
 import { earthBasemap } from '@/lib/earth-basemap';
 import { cn } from '@/lib/utils';
 import type { OloLinkState } from '@/hooks/use-ololink';
