@@ -426,15 +426,22 @@ function DashedLine({
 }
 
 /**
- * Opportunistic pass: any LEO that flies over a receiver without a designed
- * segment still transmits a straight line-of-sight beam while overhead.
+ * Live pass contact: whenever a LEO rises above a receiver's horizon it
+ * acquires the station and starts transmitting — downlink packets stream
+ * sat → station, a fainter uplink pulse returns, and the whole contact fades
+ * in and out with the pass geometry (elevation + slant range).
  */
+const DOWN_PACKETS = 5;
+
 function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: LiveMap }) {
   const N = 2;
   const core = useRef<THREE.Line>(null);
   const packs = useRef<THREE.Group>(null);
+  const uplink = useRef<THREE.Mesh>(null);
+  const glow = useRef<THREE.Mesh>(null);
   const vis = useRef(0);
   const flow = useRef(Math.random());
+  const upFlow = useRef(Math.random());
 
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -456,9 +463,15 @@ function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: Li
     a.copy(from);
     b.copy(to);
 
-    const target = windowScore(a, b) > 0.2 ? 1 : 0;
-    vis.current += (target - vis.current) * Math.min(1, d * 1.8);
-    flow.current = (flow.current + d * 0.5) % 1;
+    // contact quality drives brightness and data rate, like a real pass
+    const score = windowScore(a, b);
+    const target = THREE.MathUtils.smoothstep(score, 0.06, 0.45);
+    vis.current += (target - vis.current) * Math.min(1, d * 2.2);
+    const v = vis.current;
+
+    const rate = 0.42 + 0.85 * score;
+    flow.current = (flow.current + d * rate) % 1;
+    upFlow.current = (upFlow.current + d * rate * 0.55) % 1;
 
     const attr = geometry.getAttribute('position') as THREE.BufferAttribute;
     const arr = attr.array as Float32Array;
@@ -470,20 +483,34 @@ function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: Li
     }
     attr.needsUpdate = true;
 
-    const v = vis.current;
     if (core.current) {
       const m = core.current.material as THREE.LineBasicMaterial;
-      m.opacity = v * 0.6;
+      m.opacity = v * 0.55;
       core.current.visible = v > 0.01;
     }
     if (packs.current) {
-      packs.current.visible = v > 0.05;
+      packs.current.visible = v > 0.04;
       packs.current.children.forEach((child, i) => {
-        const t = (flow.current + i / packs.current!.children.length) % 1;
+        const t = (flow.current + i / DOWN_PACKETS) % 1;
         child.position.copy(p.copy(a).lerp(b, t));
         const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-        mat.opacity = v * (0.4 + 0.6 * Math.sin(t * Math.PI)) * 0.85;
+        mat.opacity = v * (0.35 + 0.65 * Math.sin(t * Math.PI)) * 0.9;
       });
+    }
+    if (uplink.current) {
+      const t = 1 - upFlow.current;
+      uplink.current.visible = v > 0.15;
+      uplink.current.position.copy(p.copy(a).lerp(b, t));
+      (uplink.current.material as THREE.MeshBasicMaterial).opacity =
+        v * Math.sin((1 - t) * Math.PI) * 0.5;
+    }
+    if (glow.current) {
+      // receiving station lights up while it is taking data
+      glow.current.visible = v > 0.06;
+      glow.current.position.copy(b);
+      const s = 1 + 0.35 * Math.sin(flow.current * Math.PI * 2);
+      glow.current.scale.setScalar(s);
+      (glow.current.material as THREE.MeshBasicMaterial).opacity = v * 0.4;
     }
   });
 
@@ -500,7 +527,7 @@ function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: Li
         />
       </line>
       <group ref={packs}>
-        {[0, 1, 2].map((i) => (
+        {Array.from({ length: DOWN_PACKETS }, (_, i) => (
           <mesh key={i}>
             <sphereGeometry args={[0.004, 8, 8]} />
             <meshBasicMaterial
@@ -513,7 +540,86 @@ function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: Li
           </mesh>
         ))}
       </group>
+      <mesh ref={uplink}>
+        <sphereGeometry args={[0.0028, 6, 6]} />
+        <meshBasicMaterial
+          color="#7dd3fc"
+          transparent
+          opacity={0}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+      <mesh ref={glow}>
+        <sphereGeometry args={[0.009, 12, 12]} />
+        <meshBasicMaterial
+          color="#bae6fd"
+          transparent
+          opacity={0}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
     </group>
+  );
+}
+
+/**
+ * Contact scheduler: every ~0.3 s it re-evaluates which LEO is above which
+ * receiver's horizon and opens/closes contacts accordingly, with acquisition
+ * and loss-of-signal thresholds (hysteresis) so links don't flicker.
+ */
+const PASS_RECEIVERS = ASSETS.filter((a) => a.kind === 'ground' || a.kind === 'haps');
+const ACQUIRE = 0.2;
+const LOS = 0.06;
+const MAX_PER_RX = 2;
+const MAX_CONTACTS = 26;
+
+function PassNetwork({ live, running }: { live: LiveMap; running: boolean }) {
+  const [pairs, setPairs] = useState<string[]>([]);
+  const held = useRef<Set<string>>(new Set());
+  const acc = useRef(0);
+  const tmp = useRef(new THREE.Vector3());
+
+  useFrame((_, d) => {
+    acc.current += d;
+    if (acc.current < 0.3) return;
+    acc.current = 0;
+    if (!running) return;
+
+    const candidates: { key: string; score: number }[] = [];
+    for (const rx of PASS_RECEIVERS) {
+      const rp = live.get(rx.id);
+      if (!rp) continue;
+      const local: { key: string; score: number }[] = [];
+      for (const sat of SATELLITES) {
+        const sp = live.get(sat.id);
+        if (!sp) continue;
+        const score = windowScore(tmp.current.copy(sp), rp);
+        const key = `${sat.id}|${rx.id}`;
+        const threshold = held.current.has(key) ? LOS : ACQUIRE;
+        if (score > threshold) local.push({ key, score });
+      }
+      local.sort((x, y) => y.score - x.score);
+      candidates.push(...local.slice(0, MAX_PER_RX));
+    }
+    candidates.sort((x, y) => y.score - x.score);
+    const next = candidates.slice(0, MAX_CONTACTS).map((c) => c.key).sort();
+
+    const prev = held.current;
+    if (next.length !== prev.size || next.some((k) => !prev.has(k))) {
+      held.current = new Set(next);
+      setPairs(next);
+    }
+  });
+
+  return (
+    <>
+      {pairs.map((key) => {
+        const [satId, rxId] = key.split('|') as [string, string];
+        return <PassBeam key={key} satId={satId} rxId={rxId} live={live} />;
+      })}
+    </>
   );
 }
 
@@ -1991,6 +2097,9 @@ function SceneContent({
       </Suspense>
 
       <OrbitDriver state={state} live={live} />
+
+      {/* live pass contacts: any LEO overhead a receiver transmits immediately */}
+      {layers.routes && <PassNetwork live={live} running={state.running} />}
 
       {layers.orbits && SATELLITES.map((a) => <OrbitTrack key={a.id} elId={a.id} />)}
 
