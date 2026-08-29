@@ -2098,6 +2098,9 @@ function SceneContent({
 
       <OrbitDriver state={state} live={live} />
 
+      {/* live pass contacts: any LEO overhead a receiver transmits immediately */}
+      {layers.routes && <PassNetwork live={live} running={state.running} />}
+
       {layers.orbits && SATELLITES.map((a) => <OrbitTrack key={a.id} elId={a.id} />)}
 
       {/* GLOBAL — operational regions and the trunk between them */}
