@@ -570,10 +570,10 @@ function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: Li
  * and loss-of-signal thresholds (hysteresis) so links don't flicker.
  */
 const PASS_RECEIVERS = ASSETS.filter((a) => a.kind === 'ground' || a.kind === 'haps');
-const ACQUIRE = 0.2;
-const LOS = 0.06;
-const MAX_PER_RX = 2;
-const MAX_CONTACTS = 26;
+const ACQUIRE = 0.34;
+const LOS = 0.16;
+const MAX_PER_RX = 1;
+const MAX_CONTACTS = 14;
 
 function PassNetwork({ live, running }: { live: LiveMap; running: boolean }) {
   const [pairs, setPairs] = useState<string[]>([]);
