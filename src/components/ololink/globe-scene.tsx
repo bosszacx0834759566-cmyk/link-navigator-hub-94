@@ -431,7 +431,7 @@ function DashedLine({
  * sat → station, a fainter uplink pulse returns, and the whole contact fades
  * in and out with the pass geometry (elevation + slant range).
  */
-const DOWN_PACKETS = 5;
+const DOWN_PACKETS = 3;
 
 function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: LiveMap }) {
   const N = 2;
@@ -465,13 +465,14 @@ function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: Li
 
     // contact quality drives brightness and data rate, like a real pass
     const score = windowScore(a, b);
-    const target = THREE.MathUtils.smoothstep(score, 0.06, 0.45);
-    vis.current += (target - vis.current) * Math.min(1, d * 2.2);
+    const target = THREE.MathUtils.smoothstep(score, 0.15, 0.6);
+    vis.current += (target - vis.current) * Math.min(1, d * 1.4);
     const v = vis.current;
 
-    const rate = 0.42 + 0.85 * score;
+    // gentle, unhurried stream — a burst per pass, not a strobe
+    const rate = 0.12 + 0.18 * score;
     flow.current = (flow.current + d * rate) % 1;
-    upFlow.current = (upFlow.current + d * rate * 0.55) % 1;
+    upFlow.current = (upFlow.current + d * rate * 0.4) % 1;
 
     const attr = geometry.getAttribute('position') as THREE.BufferAttribute;
     const arr = attr.array as Float32Array;
@@ -485,32 +486,31 @@ function PassBeam({ satId, rxId, live }: { satId: string; rxId: string; live: Li
 
     if (core.current) {
       const m = core.current.material as THREE.LineBasicMaterial;
-      m.opacity = v * 0.55;
-      core.current.visible = v > 0.01;
+      m.opacity = v * 0.28;
+      core.current.visible = v > 0.02;
     }
     if (packs.current) {
-      packs.current.visible = v > 0.04;
+      packs.current.visible = v > 0.05;
       packs.current.children.forEach((child, i) => {
         const t = (flow.current + i / DOWN_PACKETS) % 1;
         child.position.copy(p.copy(a).lerp(b, t));
         const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-        mat.opacity = v * (0.35 + 0.65 * Math.sin(t * Math.PI)) * 0.9;
+        mat.opacity = v * Math.pow(Math.sin(t * Math.PI), 2) * 0.7;
       });
     }
     if (uplink.current) {
       const t = 1 - upFlow.current;
-      uplink.current.visible = v > 0.15;
+      uplink.current.visible = v > 0.3;
       uplink.current.position.copy(p.copy(a).lerp(b, t));
       (uplink.current.material as THREE.MeshBasicMaterial).opacity =
-        v * Math.sin((1 - t) * Math.PI) * 0.5;
+        v * Math.sin((1 - t) * Math.PI) * 0.3;
     }
     if (glow.current) {
-      // receiving station lights up while it is taking data
-      glow.current.visible = v > 0.06;
+      // receiving station lights up softly while it is taking data
+      glow.current.visible = v > 0.08;
       glow.current.position.copy(b);
-      const s = 1 + 0.35 * Math.sin(flow.current * Math.PI * 2);
-      glow.current.scale.setScalar(s);
-      (glow.current.material as THREE.MeshBasicMaterial).opacity = v * 0.4;
+      glow.current.scale.setScalar(1);
+      (glow.current.material as THREE.MeshBasicMaterial).opacity = v * 0.22;
     }
   });
 
