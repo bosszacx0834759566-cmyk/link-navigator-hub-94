@@ -1762,11 +1762,6 @@ function TrunkRoute({ a, b }: { a: RegionDef; b: RegionDef }) {
           </mesh>
         ))}
       </group>
-      <Html center distanceFactor={3} position={curve.getPointAt(0.5)} zIndexRange={[16, 0]}>
-        <div className="pointer-events-none whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.22em] text-sky-200/60">
-          Inter-region trunk
-        </div>
-      </Html>
     </group>
   );
 }
