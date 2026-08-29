@@ -5,8 +5,7 @@
  * as a single raster so the 2D map and the globe read as one planet.
  */
 
-import earthDayAsset from '@/assets/earth_atmos_2048.jpg.asset.json';
-const earthDay = earthDayAsset.url;
+import earthDay from '@/assets/earth-map.jpg';
 import earthNight from '@/assets/earth_lights_2048.png';
 import earthClouds from '@/assets/earth_clouds_1024.png';
 
